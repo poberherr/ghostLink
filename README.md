@@ -242,3 +242,7 @@ I can now generate any (or all) of these:
 9. **A “minimal viable” scrambler with only line inversion + segment shuffle**
 
 What part do you want to dive into first?
+
+## Article on analog FPV signals
+
+https://www.getfpv.com/learn/fpv-in-depth-and-technical/analogue-fpv-video/?srsltid=AfmBOopy4V9vU4xPwMKAcF1hjLcAcNcE7AVn1EPsd4kvIziwaoc8QoWs

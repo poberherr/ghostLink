@@ -1,0 +1,7 @@
+[project]
+name = "ghostlink"
+version = "0.1.0"
+description = "A EDTH hackathon project, encrypting analog fpv vidoe signals."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []

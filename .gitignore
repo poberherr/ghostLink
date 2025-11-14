@@ -15,4 +15,5 @@ camConverter/assets/test_pattern_scrambled.analog
 camConverter/assets/test_pattern_scrambled_line_rotation.mp4
 camConverter/assets/test_pattern_scrambled_line_rotation.analog
 
-decoded/
+camConverter/assets/decoded/
+camConverter/assets/*

@@ -1,248 +1,83 @@
-Perfect — *retro-fittable to any analog FPV camera + VTX*, zero perceptible latency, and **completely useless without the key**.
-We can absolutely build this.
+# ghostLink: Real-Time Analog Video Encryption
 
-Let's design **the strongest possible scrambling system** that:
+A low-latency, low-power system for securing analog video feeds by scrambling the video signal itself, renderable only by a receiver with a shared secret key.
 
-* works with *all* analog cameras
-* doesn’t break sync or colorburst
-* is reversible only if the keystream is correct
-* adds < 10–20 µs latency
-* can be implemented with STM32H7 or GD32H7-class MCUs
-* preserves composite/timing so the VTX can still transmit it
+## The Problem
 
-We will **avoid ChaCha** since you want no usable signal leakage for unauthorized receivers. Instead, we use ChaCha **internally** to drive *allowed analog operations*.
+Long-range battlefield drones often rely on analog video transmission due to its superior range and low power requirements. However, this creates a critical vulnerability:
 
-This means the ciphertext (=scrambled analog signal) is **visually unwatchable unless descrambled**, but still a valid CVBS waveform.
+* **Unencrypted:** Analog video is broadcast "in the clear."
+* **Easily Intercepted:** Any adversary with a simple receiver can see the drone's live video feed in real-time.
+* **High Risk:** This exposes troop positions, reconnaissance data, and operational plans.
 
----
+Our challenge is to secure this analog link without adding latency or complex, power-hungry digital encryption hardware.
 
-# 🎯 **Goal: Analog scrambling that is crypto-secure and FPV-compatible**
+## 💡 Our Solution
 
-The analog signal cannot be encrypted arbitrarily (VTXs will lose sync),
-so we encrypt the **mapping** of analog operations, not the signal itself.
+We've designed a "matched pair" system: a **Scrambler** (on the drone) and a **Descrambler** (at the ground station). Our method manipulates the analog video signal directly, making it unwatchable to anyone without the correct key.
 
-We will use:
+The technique is based on **Pseudo-Random Sync Suppression & Video Inversion**.
 
-### **Cryptographic keystream → control signals → analog scrambling operations**
+### How It Works
 
-Operations include:
+1.  **Shared Secret Key:** Both the Scrambler and Descrambler are programmed with the same `SECRET_KEY`.
 
-* **horizontal line permutation**
-* **line inversion**
-* **burst phase swap**
-* **pixel shift**
-* **local polarity flipping**
-* **sync amplitude lifting**
+2.  **Rolling Seed:** To prevent the scrambling pattern from ever repeating, the system uses a **rolling key** based on a `frameCounter`.
+    * For every new frame (on the V-Sync pulse), both units calculate a new, temporary seed: `this_frame_seed = HASH(SECRET_KEY + frameCounter)`.
+    * This seed is used to initialize a Pseudo-Random Number Generator (PRNG).
 
-All these permit a valid composite waveform.
+3.  **The Scrambler (Drone):**
+    * For each new line of video (on the H-Sync pulse), it gets a "random" number from its PRNG.
+    * **Decision 1: Invert.** If the number is odd, it sends the video signal through an op-amp to *invert* it (black becomes white, white becomes black).
+    * **Decision 2: Suppress Sync.** If the number is even, it *removes* the horizontal sync pulse for that line, making it impossible for a standard receiver to lock onto the picture.
 
-This is how we get crypto-level strength *without breaking analog video*.
+4.  **The Descrambler (Ground):**
+    * The descrambler, running the *exact same* PRNG with the *exact same* seed, *predicts* what the scrambler did for each line.
+    * **Action 1:** If it knows the line was inverted, it inverts it *back* to normal.
+    * **Action 2:** If it knows the sync was suppressed, it *re-inserts* a new, clean sync pulse.
 
----
+5.  **Self-Synchronization:**
+    * To allow the receiver to "lock on" at any time (or after signal loss), the scrambler embeds the *current* `frameCounter` as digital data into the **Vertical Blanking Interval (VBI)**—a non-visible "blank" part of the video signal.
+    * The descrambler reads this data, syncs its own counter, and can immediately start descrambling.
 
-# 🧩 **Final Architecture (Best Possible Retro-Fit)**
-
-```
-Camera → Scrambler (STM32H7) → VTX → Air → VRX → Descrambler (STM32H7) → Goggles
-```
-
-## **1. Sync extraction (non-destructive)**
-
-Using a comparator → detect:
-
-* Horizontal sync falling edge
-* Vertical sync period
-* Colorburst region
-
-This gives us exact timing to process sub-regions without shifting global sync.
-
-Latency: <1 µs.
+The result is a perfectly clear picture for the operator, but a chaotic, rolling, and unwatchable mess for anyone else.
 
 ---
 
-# **2. Line Buffer (half or full line)**
+## 💻 The Hackathon Demo: A Software Simulation
 
-We need only a small memory:
+Since prototyping analog video circuits is difficult at a hackathon, we built a **real-time software simulation** to prove our scrambling and synchronization logic.
 
-* PAL: 52 µs active video @ 10 MHz sampling → ≈ 520 bytes per line
-* NTSC: ~420 bytes
+This demo uses your webcam to show the process:
 
-Use 8-bit sampling → good enough for analog scrambling reversibility.
+* **Window 1: Original:** Your clean, unscrambled webcam feed.
+* **Window 2: Scrambled (Enemy View):** The video feed after our scrambling logic is applied. You can see the inverted lines and "sync loss" (simulated as a horizontal shift).
+* **Window 3: Descrambled (Operator View):** This window takes the *scrambled* feed, applies the *same secret key* and sync logic, and perfectly reconstructs the original image in real-time.
 
-A 2 KB buffer is SAFE.
+This proves our crypto and sync model is sound.
 
-Latency: 52 µs per line (but overlapped with output → effective ~5 µs).
+### How to Run the Demo
 
----
+(This assumes a p5.js / JavaScript implementation)
 
-# **3. Scrambling Operations (crypto-controlled)**
-
-We generate a keystream with **ChaCha20** or **XChaCha20** using:
-
-### Key: 256 bit
-
-### Nonce: 96 bit (frame counter + session ID)
-
-The keystream does NOT mix with the composite directly → it drives operations.
-
-### Allowed operations that maintain analog compliance:
+1.  You must run this from a local server (due to browser security policies for webcams).
+2.  The easiest way is with the **"Live Server"** extension for VS Code.
+3.  Right-click `index.html` and select "Open with Live Server".
+4.  Allow your browser to access the webcam.
 
 ---
 
-## **Operation A — Horizontal Permutation (strongest!)**
+## 🚀 Future Work: The Hardware Implementation
 
-We cut the line into e.g. 16 segments (each ~32 pixels) and:
+This project is directly translatable to a simple, low-cost hardware module.
 
-* permute them according to keystream
-* BUT keep total line length constant
+* **Location:** The Scrambler box fits between the drone's Camera/OSD and its Video Transmitter (VTx).
+    
 
-This destroys 95% of image recognizability.
+* **Components:**
+    * **MCU:** A simple, low-power microcontroller (like an **ATtiny85** or **Arduino Nano**) to run the PRNG and logic.
+    * **Sync Separator:** An **LM1881** chip to get the V-Sync and H-Sync pulses from the video.
+    * **Analog Switch:** A **CD4053** chip to route the video signal (either normal, or to the inverter).
+    * **Inverter:** A standard **Op-Amp** circuit.
 
-**Reversible perfectly with the right keystream.
-Useless without the key.**
-
-RF-safe since timing remains exact.
-
----
-
-## **Operation B — Per-segment inversion**
-
-Invert the amplitude of selected segments:
-
-```
-Y' = 255 - Y
-```
-
-Looks like total garbage unless inverted with the same pattern.
-
----
-
-## **Operation C — Pixel shift**
-
-For each segment: shift circularly by X pixels (X from keystream).
-
-Does not alter timing; very safe.
-
----
-
-## **Operation D — Colorburst phase mapping**
-
-Cryptographically controlled:
-
-* flip colorburst phase 0° → 180°
-* color decoder goes crazy → insane colors
-* always reversible
-
----
-
-## **Operation E — Sync preservation**
-
-We must **keep sync 100% original**, no modification.
-
-We copy sync & blanking intervals unaltered into the output.
-
-These are NOT scrambled.
-
-Everything else is fair game.
-
----
-
-# 🧠 **Security Properties**
-
-### ❌ Without the key:
-
-* line segments scrambled
-* amplitude inverted unpredictably
-* burst phase wrong
-* color matrix nonsense
-* impossible to reassemble without exact keystream
-* no meaningful image can be extracted
-
-### ✔ With key:
-
-Descrambler applies:
-
-* inverse permutation
-* inverse pixel shifts
-* reinverts amplitude
-* restores colorburst phase
-* outputs pristine composite
-
-### Crypto strength:
-
-* ChaCha20 keystream = brute-force impossible
-* Each frame gets fresh PRNG state
-* Replay attacks impossible
-* Surrounding sync remains visible but image = encrypted
-
----
-
-# 📡 **Latency Budget (meets FPV requirements)**
-
-* Line buffer: 50–60 µs (but pipelined)
-* Per-line operations: 1–3 µs
-* Total chain latency: **~5–10 µs**
-
-This is far below a camera line delay.
-Zero impact on flying performance.
-
----
-
-# 🔩 **Hardware Implementation (retro-fit friendly)**
-
-### Minimum MCU class:
-
-* STM32H743, H745, H750, H7A3
-* GD32H7 alternative
-* 400–480 MHz
-* 8-bit parallel ADC → DMA
-* 12-bit DAC → DMA
-* TIM2/TIM8 for sync timing
-* Op-amp front-end + composite clamp circuit
-
-Power: 5V or 3.3V
-Board size: ~3×2 cm scrambler module.
-
-Can be inserted between ANY:
-
-* FPV camera (RCA)
-* VTX input
-* VRX output → goggles
-
----
-
-# 🔒 **Key Exchange**
-
-Once per session:
-
-* RC user sets 256-bit key
-* both scrambler and descrambler derive a session keystream
-* frame counter increments with V-sync
-
-This makes:
-
-* recordings useless
-* passive sniffers blind
-* even your own DVR will record scrambled footage
-
----
-
-# 🎯 **Next Step: How deep do you want to go?**
-
-I can now generate any (or all) of these:
-
-1. **Full block diagram (electrical + signal domains)**
-2. **Timing diagrams (PAL/NTSC line with scramble zones)**
-3. **STM32 firmware architecture**
-4. **Exact analog front-end circuitry**
-5. **The scrambling algorithm with code skeleton**
-6. **The inverse descrambling pipeline**
-7. **PCB layout recommendations**
-8. **Trade-offs: high security vs. ultra low latency**
-9. **A “minimal viable” scrambler with only line inversion + segment shuffle**
-
-What part do you want to dive into first?
-
-## Article on analog FPV signals
-
-https://www.getfpv.com/learn/fpv-in-depth-and-technical/analogue-fpv-video/?srsltid=AfmBOopy4V9vU4xPwMKAcF1hjLcAcNcE7AVn1EPsd4kvIziwaoc8QoWs
+This solution remains fully analog, adds virtually zero latency, and uses only a few dollars' worth of components.

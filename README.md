@@ -58,12 +58,32 @@ This proves our crypto and sync model is sound.
 
 ### How to Run the Demo
 
-(This assumes a p5.js / JavaScript implementation)
+> We are migrating the demo to a Python/OpenCV stack. Until the live script lands in the repo, use this section as the reference design.
 
-1.  You must run this from a local server (due to browser security policies for webcams).
-2.  The easiest way is with the **"Live Server"** extension for VS Code.
-3.  Right-click `index.html` and select "Open with Live Server".
-4.  Allow your browser to access the webcam.
+1.  Create a Python 3.11 virtual environment and `pip install -r requirements.txt` (OpenCV, NumPy, PyGame/Matplotlib for visualization).
+2.  Run the upcoming CLI entry point (planned as `python scripts/live_demo.py`) which opens the webcam, performs scrambling, and spawns the three preview windows.
+3.  Grant camera permissions when macOS prompts you.
+4.  Use `Q` in any window to exit cleanly.
+
+### Python Pipeline: Webcam ➜ Analog Representation
+
+1.  **Capture & Normalize:** OpenCV grabs frames via `cv2.VideoCapture(0)` at 30 fps and resizes to a fixed raster (e.g., 640×480) to mimic NTSC timing.
+2.  **Luminance Conversion:** Each frame is converted to Y-only (`0.299R + 0.587G + 0.114B`) and optionally low-pass filtered to simulate analog bandwidth.
+3.  **Scan-Line Synthesis:** For every row, generate a horizontal sync pulse, back porch, luminance samples, and front porch. Concatenate rows to form a per-frame waveform buffer sampled at a fixed rate (e.g., 14.318 MHz).
+4.  **Vertical Sync & VBI:** Insert the multi-line V-sync burst plus vertical blanking interval. Embed the rolling `frameCounter` bits in reserved VBI lines so the descrambler can lock instantly.
+5.  **Scramble Stage:** Feed the waveform into the pseudo-random inversion/sync-suppression module parameterized by `SECRET_KEY` and per-frame seeds.
+6.  **Descramble & Render:** A paired module regenerates the same PRNG state, reverses the operations, and reconstructs the raster back into an OpenCV image for the “operator view.”
+7.  **Visualization:** Plot the analog waveform (Matplotlib) for debugging and display the three live video windows (original, scrambled, descrambled) to verify parity with the hardware concept.
+
+### Capturing Analog Datasets (Python)
+
+Use `ghostlink.AnalogWaveformArchiver` to sample a webcam or file-based stream and store the synthesized analog waveform buffers under `data/analog_frames/`:
+
+```bash
+uv run python -c "from src.ghostlink import AnalogWaveformArchiver; AnalogWaveformArchiver().capture_stream(frame_limit=60)"
+```
+
+Each saved `.npz` contains the flattened waveform plus metadata (`sample_rate`, `line_samples`, `frame_counter`, etc.), making it easy to feed downstream scrambler/descrambler modules or visualize the analog voltage trace in notebooks.
 
 ---
 
